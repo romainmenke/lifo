@@ -1,3 +1,6 @@
+[![](https://godoc.org/github.com/romainmenke/lifo?status.svg)](http://godoc.org/github.com/romainmenke/lifo)
+
+
 # LIFO
 
 - Push as many items from multiple go routines as you like.
@@ -13,7 +16,7 @@ import (
 	"github.com/romainmenke/lifo"
 )
 
-func ExampleLifo() {
+func ExampleStack() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 

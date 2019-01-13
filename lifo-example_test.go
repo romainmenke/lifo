@@ -8,7 +8,7 @@ import (
 	"github.com/romainmenke/lifo"
 )
 
-func ExampleLifo() {
+func ExampleStack() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
