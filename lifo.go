@@ -1,6 +1,7 @@
 package lifo
 
 import (
+	"container/list"
 	"context"
 	"sync"
 )
@@ -18,7 +19,7 @@ func New(size int) *stack {
 	s := &stack{
 		size:  size,
 		sema:  make(chan struct{}, size),
-		stack: make([]interface{}, 0, size*2),
+		stack: list.New(),
 	}
 
 	return s
@@ -28,7 +29,7 @@ type stack struct {
 	mu sync.Mutex
 
 	size  int
-	stack []interface{}
+	stack *list.List
 	sema  chan struct{}
 }
 
@@ -37,19 +38,21 @@ type stack struct {
 func (s *stack) Push(v interface{}) {
 	s.mu.Lock()
 
-	select {
-	case s.sema <- struct{}{}:
-		// always try to add another to the semaphore
-	default:
-		// semaphore already filled
+	if s.stack.Len() >= s.size {
+		e := s.stack.Back()
+		if e != nil {
+			s.stack.Remove(e)
+		}
+	} else {
+		select {
+		case s.sema <- struct{}{}:
+			// always try to add another to the semaphore
+		default:
+			//
+		}
 	}
 
-	if len(s.stack) >= s.size {
-		s.stack[0] = nil
-		s.stack = s.stack[1:]
-	}
-
-	s.stack = append(s.stack, v)
+	s.stack.PushFront(v)
 
 	s.mu.Unlock()
 }
@@ -65,14 +68,12 @@ func (s *stack) Pop(ctx context.Context) (interface{}, error) {
 
 	s.mu.Lock()
 
-	n := len(s.stack)
-
-	v := s.stack[n-1]
-
-	s.stack[n-1] = nil
-	s.stack = s.stack[:n-1]
+	e := s.stack.Front()
+	if e != nil {
+		s.stack.Remove(e)
+	}
 
 	s.mu.Unlock()
 
-	return v, nil
+	return e.Value, nil
 }
