@@ -109,13 +109,13 @@ func benchmarkLifoPush(size int, b *testing.B) {
 	}
 }
 
-func BenchmarkLifoPush1(b *testing.B)   { benchmarkLifoPush(1, b) }
-func BenchmarkLifoPush10(b *testing.B)  { benchmarkLifoPush(10, b) }
-func BenchmarkLifoPush100(b *testing.B) { benchmarkLifoPush(100, b) }
-func BenchmarkLifoPush1K(b *testing.B)  { benchmarkLifoPush(1000, b) }
-func BenchmarkLifoPush10K(b *testing.B) { benchmarkLifoPush(1000*10, b) }
+func BenchmarkLifoPushSize1(b *testing.B)   { benchmarkLifoPush(1, b) }
+func BenchmarkLifoPushSize10(b *testing.B)  { benchmarkLifoPush(10, b) }
+func BenchmarkLifoPushSize100(b *testing.B) { benchmarkLifoPush(100, b) }
+func BenchmarkLifoPushSize1K(b *testing.B)  { benchmarkLifoPush(1000, b) }
+func BenchmarkLifoPushSize10K(b *testing.B) { benchmarkLifoPush(1000*10, b) }
 
-func benchmarkLifoPop(size int, b *testing.B) {
+func benchmarkLifoPopSize(size int, b *testing.B) {
 	stack := lifo.New(size)
 	for i := 0; i < size; i++ {
 		stack.Push(struct{}{})
@@ -132,8 +132,79 @@ func benchmarkLifoPop(size int, b *testing.B) {
 	}
 }
 
-func BenchmarkLifoPop1(b *testing.B)   { benchmarkLifoPop(1, b) }
-func BenchmarkLifoPop10(b *testing.B)  { benchmarkLifoPop(10, b) }
-func BenchmarkLifoPop100(b *testing.B) { benchmarkLifoPop(100, b) }
-func BenchmarkLifoPop1K(b *testing.B)  { benchmarkLifoPop(1000, b) }
-func BenchmarkLifoPop10K(b *testing.B) { benchmarkLifoPop(1000*10, b) }
+func BenchmarkLifoPopSize1(b *testing.B)   { benchmarkLifoPopSize(1, b) }
+func BenchmarkLifoPopSize10(b *testing.B)  { benchmarkLifoPopSize(10, b) }
+func BenchmarkLifoPopSize100(b *testing.B) { benchmarkLifoPopSize(100, b) }
+func BenchmarkLifoPopSize1K(b *testing.B)  { benchmarkLifoPopSize(1000, b) }
+func BenchmarkLifoPopSize10K(b *testing.B) { benchmarkLifoPopSize(1000*10, b) }
+
+// IO is the expected bottleneck
+// Ensure that large numbers of poppers and pushers don't cause run away locking or cross signalling between callers.
+// 2 x size Pushes
+// 1 x size Poppers
+// 2 x size Stack
+func benchmarkLifoPopCallers(size int, b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stack := lifo.New(size * 2)
+
+	for i := 0; i < (size * 2); i++ {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				stack.Push(struct{}{})
+			}
+		}()
+	}
+
+	for i := 0; i < size; i++ {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				func() {
+					ctxPop, cancelPop := context.WithTimeout(context.Background(), time.Microsecond*5)
+					defer cancelPop()
+
+					stack.Pop(ctxPop)
+				}()
+			}
+		}()
+	}
+
+	time.Sleep(time.Second)
+
+	b.ResetTimer()
+
+	// Bench how long it takes to Pop 1 Item
+	for n := 0; n < b.N; n++ {
+		func() {
+
+			func() {
+				ctx2, cancel2 := context.WithTimeout(context.Background(), time.Millisecond*500)
+				defer cancel2()
+
+				_, err := stack.Pop(ctx2)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}()
+
+		}()
+	}
+}
+
+func BenchmarkLifoPopCallers3(b *testing.B)   { benchmarkLifoPopCallers(1, b) }
+func BenchmarkLifoPopCallers30(b *testing.B)  { benchmarkLifoPopCallers(10, b) }
+func BenchmarkLifoPopCallers300(b *testing.B) { benchmarkLifoPopCallers(100, b) }
+func BenchmarkLifoPopCallers3K(b *testing.B)  { benchmarkLifoPopCallers(1000, b) }

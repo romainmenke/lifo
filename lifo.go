@@ -3,6 +3,7 @@ package lifo
 import (
 	"container/list"
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -18,62 +19,95 @@ func New(size int) *stack {
 
 	s := &stack{
 		size:  size,
-		sema:  make(chan struct{}, size),
 		stack: list.New(),
+		scond: sync.NewCond(&sync.Mutex{}),
 	}
 
 	return s
 }
 
 type stack struct {
-	mu sync.Mutex
+	scond *sync.Cond
 
 	size  int
 	stack *list.List
-	sema  chan struct{}
 }
 
 // Add never blocks, it just removes the oldest items from the queue
 // Handling items that never get processed is up to the implementer
 func (s *stack) Push(v interface{}) {
-	s.mu.Lock()
+	s.scond.L.Lock()
 
+	needsSignal := false
 	if s.stack.Len() >= s.size {
 		e := s.stack.Back()
 		if e != nil {
 			s.stack.Remove(e)
 		}
 	} else {
-		select {
-		case s.sema <- struct{}{}:
-			// always try to add another to the semaphore
-		default:
-			//
-		}
+		needsSignal = true
 	}
 
 	s.stack.PushFront(v)
 
-	s.mu.Unlock()
+	if needsSignal {
+		s.scond.Signal()
+	}
+
+	s.scond.L.Unlock()
 }
 
 // Pop blocks until there is an item to pop
 func (s *stack) Pop(ctx context.Context) (interface{}, error) {
-	select {
-	case <-s.sema:
-		// wait for item in stack
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	s.scond.L.Lock()
+	defer s.scond.L.Unlock()
+
+	if s.stack.Len() > 0 {
+		v, err := s.popLocked()
+		return v, err
 	}
 
-	s.mu.Lock()
+	ctx2, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
+	go func() {
+		select {
+		case <-ctx.Done():
+			s.scond.Broadcast()
+			return
+		case <-ctx2.Done():
+			return
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			//
+		}
+
+		if s.stack.Len() > 0 {
+			break
+		}
+
+		s.scond.Wait()
+	}
+
+	v, err := s.popLocked()
+
+	return v, err
+}
+
+// Pop blocks until there is an item to pop
+func (s *stack) popLocked() (interface{}, error) {
 	e := s.stack.Front()
-	if e != nil {
-		s.stack.Remove(e)
+	if e == nil {
+		return nil, errors.New("lifo : tried to pop an empty stack")
 	}
 
-	s.mu.Unlock()
+	s.stack.Remove(e)
 
 	return e.Value, nil
 }

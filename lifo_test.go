@@ -22,7 +22,7 @@ func TestStackSize(t *testing.T) {
 		t.Run(fmt.Sprint(tc), func(t *testing.T) {
 			s := &stack{
 				size:  tc,
-				sema:  make(chan struct{}, tc),
+				scond: sync.NewCond(&sync.Mutex{}),
 				stack: list.New(),
 			}
 
@@ -81,7 +81,7 @@ func TestDrain(t *testing.T) {
 		t.Run(fmt.Sprint(tc), func(t *testing.T) {
 			s := New(tc)
 
-			for i := 0; i < (tc + 10); i++ {
+			for i := 0; i < tc; i++ {
 				s.Push(fmt.Sprint(i))
 			}
 
@@ -89,21 +89,12 @@ func TestDrain(t *testing.T) {
 				func() {
 					ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*10)
 					defer cancel()
-
 					s.Pop(ctx)
-
 				}()
 			}
 
 			if s.stack.Len() != 0 {
 				t.Fatal("expected stack to be empty, got : ", s.stack.Len())
-			}
-
-			select {
-			case <-s.sema:
-				t.Fatal("sema not drained")
-			default:
-				return
 			}
 		})
 	}
@@ -201,7 +192,6 @@ func TestLargeNumberOfCallers(t *testing.T) {
 						_, err := s.Pop(ctxPop)
 						if err != nil {
 							t.Log("stack len : ", s.stack.Len())
-							t.Log("sema  len : ", len(s.sema))
 							t.Fatal(err)
 						}
 					}()
@@ -211,13 +201,6 @@ func TestLargeNumberOfCallers(t *testing.T) {
 
 			if s.stack.Len() != 0 {
 				t.Fatal("expected stack to be empty, got : ", s.stack.Len())
-			}
-
-			select {
-			case <-s.sema:
-				t.Fatal("sema not drained")
-			default:
-				return
 			}
 		})
 	}
